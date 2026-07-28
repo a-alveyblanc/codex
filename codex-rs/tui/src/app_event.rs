@@ -752,6 +752,14 @@ pub(crate) enum AppEvent {
         deferred_history_cell: Option<Box<dyn HistoryCell>>,
     },
 
+    /// Install an asynchronous display-math render batch into its source-backed history cells.
+    DisplayMathRendered {
+        renders: Vec<(
+            Arc<crate::history_cell::AgentMarkdownCell>,
+            crate::display_math::PreparedDisplayMath,
+        )>,
+    },
+
     /// Replace the contiguous run of streaming `ProposedPlanStreamCell`s at the
     /// end of the transcript with a single source-backed `ProposedPlanCell`.
     ///

@@ -19,6 +19,11 @@ pub(super) struct MarkdownRenderCacheKey {
 }
 
 impl MarkdownRenderCache {
+    pub(super) fn clear(&self) {
+        let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
+        *cached = None;
+    }
+
     /// Return lines cached for this width and terminal render state, rendering on a cache miss.
     ///
     /// Only the most recent entry is retained, so changing width, syntax theme, or terminal colors

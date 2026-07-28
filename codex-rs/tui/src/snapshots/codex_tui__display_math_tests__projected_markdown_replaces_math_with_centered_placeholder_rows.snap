@@ -1,0 +1,11 @@
+---
+source: tui/src/display_math_tests.rs
+expression: projected
+---
+A result:
+
+<display-math width=26 image-color=Some((155, 59, 8))>
+<display-math width=26 image-color=Some((155, 59, 8))>
+<display-math width=26 image-color=Some((155, 59, 8))>
+
+After.

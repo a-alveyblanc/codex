@@ -499,10 +499,17 @@ struct SessionSummary {
     resume_hint: Option<String>,
 }
 
+#[derive(Debug)]
+struct PendingDisplayMathRender {
+    cell: Arc<history_cell::AgentMarkdownCell>,
+    job: crate::display_math::DisplayMathJob,
+}
+
 #[derive(Debug, Default)]
 struct InitialHistoryReplayBuffer {
     retained_lines: VecDeque<crate::terminal_hyperlinks::HyperlinkLine>,
     render_from_transcript_tail: bool,
+    display_math_jobs: Vec<PendingDisplayMathRender>,
 }
 
 pub(crate) struct App {

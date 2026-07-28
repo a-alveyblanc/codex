@@ -332,6 +332,33 @@ impl App {
                 self.chat_widget.note_stream_consolidation_completed();
                 self.insert_pending_usage_output_after_stream_shutdown(tui);
             }
+            AppEvent::DisplayMathRendered { renders } => {
+                let terminal_width = tui.terminal.size()?.width;
+                let history_width = self.chat_widget.history_wrap_width(terminal_width);
+                let mut images = Vec::new();
+                let mut installed = false;
+                for (cell, prepared) in renders {
+                    let history_cell: Arc<dyn HistoryCell> = cell.clone();
+                    let still_present = self
+                        .transcript_cells
+                        .iter()
+                        .any(|candidate| Arc::ptr_eq(candidate, &history_cell));
+                    if !still_present || !prepared.has_images() {
+                        continue;
+                    }
+                    cell.install_display_math(prepared);
+                    images.extend(cell.terminal_images(terminal_width));
+                    if history_width != terminal_width {
+                        images.extend(cell.terminal_images(history_width));
+                    }
+                    installed = true;
+                }
+                if installed {
+                    tui.register_display_math_images(&images)?;
+                    self.finish_required_stream_reflow(tui)?;
+                    tui.frame_requester().schedule_frame();
+                }
+            }
             AppEvent::ConsolidateProposedPlan(source) => {
                 let end = self.transcript_cells.len();
                 let start = trailing_run_start::<history_cell::ProposedPlanStreamCell>(

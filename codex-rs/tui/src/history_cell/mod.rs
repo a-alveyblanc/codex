@@ -218,6 +218,11 @@ pub(crate) trait HistoryCell: std::fmt::Debug + Send + Sync + Any {
         }
     }
 
+    /// Return terminal image registrations required by rich display lines at this width.
+    fn terminal_images(&self, _width: u16) -> Vec<crate::display_math::TerminalImage> {
+        Vec::new()
+    }
+
     /// Returns the number of viewport rows needed to render this cell.
     ///
     /// The default delegates to `Paragraph::line_count` with

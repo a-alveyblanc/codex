@@ -1,0 +1,5 @@
+---
+source: tui/src/display_math_tests.rs
+expression: projected
+---
+Energy <inline-math columns=7 image-color=Some((103, 26, 63))> stays inline.

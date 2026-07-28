@@ -115,6 +115,10 @@ mod cwd_prompt;
 mod debug_config;
 mod diff_model;
 mod diff_render;
+mod display_math;
+mod display_math_renderer;
+#[cfg(test)]
+mod display_math_tests;
 mod exec_cell;
 mod exec_command;
 mod external_agent_config_migration;

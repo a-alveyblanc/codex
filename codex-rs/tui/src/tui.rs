@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::io::IsTerminal;
@@ -562,6 +564,7 @@ pub struct Tui {
     event_broker: Arc<EventBroker>,
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
+    display_math_images: HashMap<u32, crate::display_math::TerminalImage>,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
     pet_picker_preview_image_state: crate::pets::PetImageRenderState,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
@@ -619,6 +622,7 @@ impl Tui {
             event_broker: Arc::new(EventBroker::new()),
             terminal,
             pending_history_lines: vec![],
+            display_math_images: HashMap::new(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
             alt_saved_viewport: None,
@@ -655,6 +659,97 @@ impl Tui {
 
     pub fn enhanced_keys_supported(&self) -> bool {
         self.enhanced_keys_supported
+    }
+
+    pub(crate) fn display_math_cell_size(&mut self) -> crate::display_math::CellSizePixels {
+        let Ok(window) = self.terminal.backend_mut().window_size() else {
+            return crate::display_math::CellSizePixels::default();
+        };
+        let columns = window.columns_rows.width;
+        let rows = window.columns_rows.height;
+        if columns == 0 || rows == 0 || window.pixels.width == 0 || window.pixels.height == 0 {
+            return crate::display_math::CellSizePixels::default();
+        }
+        crate::display_math::CellSizePixels {
+            width: window.pixels.width.div_ceil(columns).max(1),
+            height: window.pixels.height.div_ceil(rows).max(1),
+        }
+    }
+
+    pub(crate) fn register_display_math_images(
+        &mut self,
+        images: &[crate::display_math::TerminalImage],
+    ) -> Result<()> {
+        let tmux = crate::display_math::tmux_passthrough_required();
+        let mut commands = String::new();
+        for image in images {
+            if self
+                .display_math_images
+                .get(&image.image_id)
+                .is_some_and(|registered| registered.same_content(image))
+            {
+                continue;
+            }
+            if self.display_math_images.contains_key(&image.image_id) {
+                commands.push_str(&crate::display_math::kitty_delete_command(
+                    image.image_id,
+                    tmux,
+                ));
+            }
+            commands.push_str(&crate::display_math::kitty_upload_command(image, tmux));
+            self.display_math_images
+                .insert(image.image_id, image.clone());
+        }
+        if !commands.is_empty() {
+            self.terminal.backend_mut().write_all(commands.as_bytes())?;
+            std::io::Write::flush(self.terminal.backend_mut())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn sync_display_math_images(
+        &mut self,
+        images: &[crate::display_math::TerminalImage],
+    ) -> Result<()> {
+        let desired = images
+            .iter()
+            .map(|image| image.image_id)
+            .collect::<HashSet<_>>();
+        let stale = self
+            .display_math_images
+            .keys()
+            .filter(|image_id| !desired.contains(image_id))
+            .copied()
+            .collect::<Vec<_>>();
+        if !stale.is_empty() {
+            let tmux = crate::display_math::tmux_passthrough_required();
+            let commands = stale
+                .iter()
+                .map(|image_id| crate::display_math::kitty_delete_command(*image_id, tmux))
+                .collect::<String>();
+            self.terminal.backend_mut().write_all(commands.as_bytes())?;
+            std::io::Write::flush(self.terminal.backend_mut())?;
+            for image_id in stale {
+                self.display_math_images.remove(&image_id);
+            }
+        }
+        self.register_display_math_images(images)
+    }
+
+    pub(crate) fn clear_display_math_images(&mut self) -> Result<()> {
+        if self.display_math_images.is_empty() {
+            return Ok(());
+        }
+        let tmux = crate::display_math::tmux_passthrough_required();
+        let commands = self
+            .display_math_images
+            .keys()
+            .map(|image_id| crate::display_math::kitty_delete_command(*image_id, tmux))
+            .collect::<String>();
+        self.terminal.backend_mut().write_all(commands.as_bytes())?;
+        std::io::Write::flush(self.terminal.backend_mut())?;
+        self.display_math_images.clear();
+        Ok(())
     }
 
     pub fn is_alt_screen_active(&self) -> bool {

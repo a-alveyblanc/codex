@@ -371,6 +371,8 @@ pub(crate) struct AgentMarkdownCell {
     cwd: PathBuf,
     inline_visualization_context: Option<crate::inline_visualization::InlineVisualizationContext>,
     rendered_lines: Option<MarkdownRenderCache>,
+    prepared_display_math:
+        std::sync::Mutex<Option<std::sync::Arc<crate::display_math::PreparedDisplayMath>>>,
 }
 
 impl AgentMarkdownCell {
@@ -403,7 +405,30 @@ impl AgentMarkdownCell {
             cwd: cwd.to_path_buf(),
             inline_visualization_context,
             rendered_lines,
+            prepared_display_math: std::sync::Mutex::new(None),
         }
+    }
+
+    pub(crate) fn install_display_math(&self, prepared: crate::display_math::PreparedDisplayMath) {
+        {
+            let mut current = self
+                .prepared_display_math
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *current = Some(std::sync::Arc::new(prepared));
+        }
+        if let Some(rendered_lines) = &self.rendered_lines {
+            rendered_lines.clear();
+        }
+    }
+
+    fn prepared_display_math(
+        &self,
+    ) -> Option<std::sync::Arc<crate::display_math::PreparedDisplayMath>> {
+        self.prepared_display_math
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -441,12 +466,21 @@ impl HistoryCell for AgentMarkdownCell {
 
             // Re-render markdown from source at the current width. Reserve 2 columns for the "• " /
             // " " prefix prepended below.
-            let lines = crate::markdown::render_markdown_agent_with_links_cwd_and_visualizations(
-                &self.markdown_source,
-                Some(wrap_width),
-                Some(self.cwd.as_path()),
-                self.inline_visualization_context.as_ref(),
-            );
+            let lines = if let Some(display_math) = self.prepared_display_math() {
+                display_math.render_markdown(
+                    &self.markdown_source,
+                    wrap_width,
+                    Some(self.cwd.as_path()),
+                    self.inline_visualization_context.as_ref(),
+                )
+            } else {
+                crate::markdown::render_markdown_agent_with_links_cwd_and_visualizations(
+                    &self.markdown_source,
+                    Some(wrap_width),
+                    Some(self.cwd.as_path()),
+                    self.inline_visualization_context.as_ref(),
+                )
+            };
             normalize_whitespace_only_hyperlink_lines(prefix_hyperlink_lines(
                 lines,
                 "• ".dim(),
@@ -469,8 +503,19 @@ impl HistoryCell for AgentMarkdownCell {
         raw_lines_from_source(&self.markdown_source)
     }
 
+    fn terminal_images(&self, width: u16) -> Vec<crate::display_math::TerminalImage> {
+        let Some(wrap_width) =
+            crate::width::usable_content_width_u16(width, /*reserved_cols*/ 2)
+        else {
+            return Vec::new();
+        };
+        self.prepared_display_math()
+            .map(|prepared| prepared.terminal_images(wrap_width))
+            .unwrap_or_default()
+    }
+
     fn has_stable_transcript_height(&self) -> bool {
-        self.rendered_lines.is_some()
+        self.rendered_lines.is_some() && !self.markdown_source.contains("$$")
     }
 }
 

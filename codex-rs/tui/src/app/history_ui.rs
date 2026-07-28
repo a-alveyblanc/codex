@@ -134,6 +134,7 @@ impl App {
 
         // Drop queued history insertions so stale transcript lines cannot be flushed after /clear.
         tui.clear_pending_history_lines();
+        tui.clear_display_math_images()?;
 
         if is_alt_screen_active {
             tui.terminal.clear_visible_screen()?;

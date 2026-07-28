@@ -151,6 +151,16 @@ pub(crate) fn log_inbound_app_event(event: &AppEvent) {
             });
             LOGGER.write_json_line(value);
         }
+        AppEvent::DisplayMathRendered { renders } => {
+            let value = json!({
+                "ts": now_ts(),
+                "dir": "to_tui",
+                "kind": "display_math_rendered",
+                "render_count": renders.len(),
+                "has_images": renders.iter().any(|(_, prepared)| prepared.has_images()),
+            });
+            LOGGER.write_json_line(value);
+        }
         AppEvent::StartFileSearch(query) => {
             let value = json!({
                 "ts": now_ts(),
