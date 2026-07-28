@@ -198,6 +198,7 @@ impl App {
             self.transcript_cells.clone(),
             self.keymap.pager.clone(),
         ));
+        self.spawn_deferred_display_math_renders(tui);
         tui.frame_requester().schedule_frame();
     }
 

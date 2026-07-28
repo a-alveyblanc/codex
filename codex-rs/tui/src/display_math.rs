@@ -175,14 +175,14 @@ impl DisplayMathJob {
 }
 
 pub(crate) fn job_for_source(
-    source: String,
+    source: &str,
     codex_home: &Path,
     cell_size: CellSizePixels,
 ) -> Option<DisplayMathJob> {
     if !terminal_supports_display_math(&codex_terminal_detection::terminal_info()) {
         return None;
     }
-    let blocks = parse_math(&source);
+    let blocks = parse_math(source);
     if blocks.is_empty() {
         return None;
     }
@@ -193,17 +193,6 @@ pub(crate) fn job_for_source(
         background: crate::terminal_palette::default_bg().unwrap_or((0, 0, 0)),
         cell_size,
     })
-}
-
-#[cfg(test)]
-pub(crate) fn empty_job_for_test() -> DisplayMathJob {
-    DisplayMathJob {
-        blocks: Vec::new(),
-        cache_dir: PathBuf::new(),
-        foreground: (235, 235, 235),
-        background: (0, 0, 0),
-        cell_size: CellSizePixels::default(),
-    }
 }
 
 fn terminal_supports_display_math(info: &TerminalInfo) -> bool {

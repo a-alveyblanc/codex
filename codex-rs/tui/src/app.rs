@@ -509,7 +509,7 @@ struct PendingDisplayMathRender {
 struct InitialHistoryReplayBuffer {
     retained_lines: VecDeque<crate::terminal_hyperlinks::HyperlinkLine>,
     render_from_transcript_tail: bool,
-    display_math_jobs: Vec<PendingDisplayMathRender>,
+    display_math_cells: Vec<Arc<history_cell::AgentMarkdownCell>>,
 }
 
 pub(crate) struct App {
@@ -539,6 +539,11 @@ pub(crate) struct App {
     has_emitted_history_lines: bool,
     transcript_reflow: TranscriptReflowState,
     initial_history_replay_buffer: Option<InitialHistoryReplayBuffer>,
+    /// Finalized assistant cells outside the retained startup tail.
+    ///
+    /// Their math jobs are rebuilt only if the full transcript overlay is opened, so resuming a
+    /// large thread does not parse, read, or upload every historical equation eagerly.
+    deferred_display_math_cells: Vec<Arc<history_cell::AgentMarkdownCell>>,
 
     pub(crate) enhanced_keys_supported: bool,
     pub(crate) keymap: RuntimeKeymap,
@@ -1058,6 +1063,7 @@ See the Codex keymap documentation for supported actions and examples."
             has_emitted_history_lines: false,
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
+            deferred_display_math_cells: Vec::new(),
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),

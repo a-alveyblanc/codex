@@ -14,6 +14,7 @@
 //! terminal. Initial resume replay uses the same display-line buffering contract so large sessions
 //! do not write more retained rows than resize replay would later be willing to rebuild.
 
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
@@ -117,6 +118,7 @@ impl App {
     /// Starting this buffer while an overlay owns rendering would split transcript ownership, so
     /// overlay replay continues through the normal deferred-history path.
     pub(super) fn begin_initial_history_replay_buffer(&mut self) {
+        self.deferred_display_math_cells.clear();
         if self.overlay.is_none() {
             self.initial_history_replay_buffer = Some(Default::default());
         }
@@ -128,11 +130,12 @@ impl App {
     /// defer terminal writes until the replay is complete and reuse the resize-reflow tail renderer
     /// so only the rows the terminal would retain are formatted and inserted.
     pub(super) fn begin_thread_switch_history_replay_buffer(&mut self) {
+        self.deferred_display_math_cells.clear();
         if self.resize_reflow_max_rows().is_some() && self.overlay.is_none() {
             self.initial_history_replay_buffer = Some(InitialHistoryReplayBuffer {
                 retained_lines: VecDeque::new(),
                 render_from_transcript_tail: true,
-                display_math_jobs: Vec::new(),
+                display_math_cells: Vec::new(),
             });
         }
     }
@@ -146,7 +149,14 @@ impl App {
         let Some(mut buffer) = self.initial_history_replay_buffer.take() else {
             return;
         };
-        self.spawn_display_math_render_batch(std::mem::take(&mut buffer.display_math_jobs));
+        let width = self
+            .chat_widget
+            .history_wrap_width(tui.terminal.last_known_screen_size.width);
+        let display_math_cells = self.partition_initial_replay_display_math_cells(
+            std::mem::take(&mut buffer.display_math_cells),
+            width,
+        );
+        self.spawn_display_math_renders_for_cells(tui, display_math_cells);
 
         if buffer.render_from_transcript_tail || self.overlay.is_some() {
             // Reflow clears any pre-replay or partially emitted history and applies the reserved
@@ -164,6 +174,78 @@ impl App {
             retained_lines,
             self.history_line_wrap_policy(),
         );
+    }
+
+    /// Keep startup math work inside the same transcript suffix as row-capped scrollback.
+    ///
+    /// The backward walk intentionally mirrors `render_transcript_lines_for_reflow`: it includes
+    /// the first cell that crosses the row budget and the start of any stream-continuation run.
+    /// This small boundary prefetch prevents a resize immediately after startup from exposing an
+    /// unprepared equation. Older cells retain their source and are rendered on demand when the
+    /// full transcript overlay opens.
+    pub(super) fn partition_initial_replay_display_math_cells(
+        &mut self,
+        pending: Vec<Arc<history_cell::AgentMarkdownCell>>,
+        width: u16,
+    ) -> Vec<Arc<history_cell::AgentMarkdownCell>> {
+        self.deferred_display_math_cells.clear();
+        let Some(max_rows) = self.resize_reflow_max_rows() else {
+            return pending;
+        };
+        if self.overlay.is_some() {
+            return pending;
+        }
+
+        let retained_start = self.retained_transcript_tail_start(width, max_rows);
+        let transcript_cells = self
+            .transcript_cells
+            .iter()
+            .map(|cell| Arc::as_ptr(cell) as *const ())
+            .collect::<HashSet<_>>();
+        let retained_cells = self.transcript_cells[retained_start..]
+            .iter()
+            .map(|cell| Arc::as_ptr(cell) as *const ())
+            .collect::<HashSet<_>>();
+        let mut immediate = Vec::new();
+        for cell in pending {
+            let cell_ptr = Arc::as_ptr(&cell) as *const ();
+            if retained_cells.contains(&cell_ptr) {
+                immediate.push(cell);
+            } else if transcript_cells.contains(&cell_ptr) {
+                self.deferred_display_math_cells.push(cell);
+            }
+        }
+        tracing::debug!(
+            immediate_cells = immediate.len(),
+            deferred_cells = self.deferred_display_math_cells.len(),
+            retained_start,
+            transcript_cells = self.transcript_cells.len(),
+            "partitioned initial replay display-math work"
+        );
+        immediate
+    }
+
+    fn retained_transcript_tail_start(&self, width: u16, max_rows: usize) -> usize {
+        if max_rows == 0 {
+            return self.transcript_cells.len();
+        }
+
+        let render_mode = self.chat_widget.history_render_mode();
+        let mut rendered_rows = 0usize;
+        let mut start = self.transcript_cells.len();
+        while start > 0 {
+            start -= 1;
+            rendered_rows += self.transcript_cells[start]
+                .display_hyperlink_lines_for_mode(width, render_mode)
+                .len();
+            if rendered_rows > max_rows {
+                break;
+            }
+        }
+        while start > 0 && self.transcript_cells[start].is_stream_continuation() {
+            start -= 1;
+        }
+        start
     }
 
     pub(super) fn insert_history_cell_lines_with_initial_replay_buffer(

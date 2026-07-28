@@ -422,6 +422,10 @@ impl AgentMarkdownCell {
         }
     }
 
+    pub(crate) fn display_math_source(&self) -> &str {
+        &self.markdown_source
+    }
+
     fn prepared_display_math(
         &self,
     ) -> Option<std::sync::Arc<crate::display_math::PreparedDisplayMath>> {
@@ -515,7 +519,10 @@ impl HistoryCell for AgentMarkdownCell {
     }
 
     fn has_stable_transcript_height(&self) -> bool {
-        self.rendered_lines.is_some() && !self.markdown_source.contains("$$")
+        // Math installation clears the cell's Markdown cache and can change both height and width.
+        // Keep the transcript overlay from wrapping a math-bearing cell in its own immutable
+        // render cache before the deferred render has arrived.
+        self.rendered_lines.is_some() && !self.markdown_source.contains('$')
     }
 }
 

@@ -80,3 +80,14 @@ fn visualization_directives_are_not_cached() {
 
     assert!(cell.rendered_lines.is_none());
 }
+
+#[test]
+fn math_cells_do_not_freeze_the_transcript_overlay_before_deferred_rendering() {
+    let plain = AgentMarkdownCell::new("plain markdown".to_string(), Path::new("/tmp"));
+    let inline = AgentMarkdownCell::new("inline $x + y$".to_string(), Path::new("/tmp"));
+    let display = AgentMarkdownCell::new("$$\nx + y\n$$".to_string(), Path::new("/tmp"));
+
+    assert!(plain.has_stable_transcript_height());
+    assert!(!inline.has_stable_transcript_height());
+    assert!(!display.has_stable_transcript_height());
+}

@@ -7,6 +7,7 @@
 //! transcript the canonical owner of the raw markdown source used for future
 //! resize re-renders.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -20,6 +21,8 @@ use crate::inline_visualization::InlineVisualizationContext;
 use crate::pager_overlay::Overlay;
 use crate::tui;
 use color_eyre::eyre::Result;
+
+const DISPLAY_MATH_RENDER_CONCURRENCY: usize = 4;
 
 impl App {
     pub(super) fn handle_consolidate_agent_message(
@@ -51,15 +54,6 @@ impl App {
         );
         let start = trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
         if start < end {
-            let display_math_job = if self.config.tui_display_math {
-                crate::display_math::job_for_source(
-                    source.clone(),
-                    &self.config.codex_home,
-                    tui.display_math_cell_size(),
-                )
-            } else {
-                None
-            };
             tracing::debug!(
                 "ConsolidateAgentMessage: replacing cells [{start}..{end}] with AgentMarkdownCell"
             );
@@ -80,11 +74,8 @@ impl App {
             }
 
             self.finish_agent_message_consolidation(tui, scrollback_reflow)?;
-            if let Some(job) = display_math_job {
-                self.queue_display_math_render(PendingDisplayMathRender {
-                    cell: consolidated,
-                    job,
-                });
+            if self.config.tui_display_math {
+                self.queue_display_math_render(tui, consolidated);
             }
         } else {
             tracing::debug!(
@@ -96,12 +87,65 @@ impl App {
         Ok(())
     }
 
-    fn queue_display_math_render(&mut self, pending: PendingDisplayMathRender) {
-        if let Some(buffer) = self.initial_history_replay_buffer.as_mut() {
-            buffer.display_math_jobs.push(pending);
+    fn queue_display_math_render(
+        &mut self,
+        tui: &mut tui::Tui,
+        cell: Arc<history_cell::AgentMarkdownCell>,
+    ) {
+        if !cell.display_math_source().contains('$') {
             return;
         }
-        self.spawn_display_math_render_batch(vec![pending]);
+        if let Some(buffer) = self.initial_history_replay_buffer.as_mut() {
+            buffer.display_math_cells.push(cell);
+            return;
+        }
+        self.spawn_display_math_renders_for_cells(tui, vec![cell]);
+    }
+
+    pub(super) fn spawn_display_math_renders_for_cells(
+        &self,
+        tui: &mut tui::Tui,
+        cells: Vec<Arc<history_cell::AgentMarkdownCell>>,
+    ) {
+        if cells.is_empty() {
+            return;
+        }
+        let cell_size = tui.display_math_cell_size();
+        let pending = cells
+            .into_iter()
+            .filter_map(|cell| {
+                crate::display_math::job_for_source(
+                    cell.display_math_source(),
+                    &self.config.codex_home,
+                    cell_size,
+                )
+                .map(|job| PendingDisplayMathRender { cell, job })
+            })
+            .collect();
+        self.spawn_display_math_render_batch(pending);
+    }
+
+    /// Render equations that were intentionally skipped outside the retained startup tail.
+    ///
+    /// The cells already own the original Markdown, so retaining them costs only one additional
+    /// `Arc` each. Rebuilding jobs here avoids storing a second copy of every parsed formula for the
+    /// lifetime of a large resumed thread.
+    pub(crate) fn spawn_deferred_display_math_renders(&mut self, tui: &mut tui::Tui) {
+        if !self.config.tui_display_math || self.deferred_display_math_cells.is_empty() {
+            self.deferred_display_math_cells.clear();
+            return;
+        }
+
+        let transcript_cells = self
+            .transcript_cells
+            .iter()
+            .map(|cell| Arc::as_ptr(cell) as *const ())
+            .collect::<HashSet<_>>();
+        let cells = std::mem::take(&mut self.deferred_display_math_cells)
+            .into_iter()
+            .filter(|cell| transcript_cells.contains(&(Arc::as_ptr(cell) as *const ())))
+            .collect();
+        self.spawn_display_math_renders_for_cells(tui, cells);
     }
 
     pub(super) fn spawn_display_math_render_batch(&self, pending: Vec<PendingDisplayMathRender>) {
@@ -111,7 +155,8 @@ impl App {
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let mut tasks = tokio::task::JoinSet::new();
-            for pending in pending {
+            let mut pending = pending.into_iter();
+            for pending in pending.by_ref().take(DISPLAY_MATH_RENDER_CONCURRENCY) {
                 tasks.spawn(async move { (pending.cell, pending.job.render().await) });
             }
             let mut renders = Vec::new();
@@ -121,6 +166,9 @@ impl App {
                     Err(err) => {
                         tracing::warn!(error = %err, "display-math render task failed");
                     }
+                }
+                if let Some(pending) = pending.next() {
+                    tasks.spawn(async move { (pending.cell, pending.job.render().await) });
                 }
             }
             app_event_tx.send(crate::app_event::AppEvent::DisplayMathRendered { renders });
