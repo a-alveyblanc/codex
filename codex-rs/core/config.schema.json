@@ -3222,7 +3222,7 @@
         },
         "display_math": {
           "default": false,
-          "description": "Render top-level `$$...$$` display math as terminal images when supported. Defaults to `false`.",
+          "description": "Render inline `$...$` and top-level `$$...$$` math as terminal images when supported. Defaults to `false`.",
           "type": "boolean"
         },
         "keymap": {

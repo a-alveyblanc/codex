@@ -753,7 +753,7 @@ pub struct Config {
     /// Start the TUI in raw scrollback mode for copy-friendly transcript output.
     pub tui_raw_output_mode: bool,
 
-    /// Render top-level display math as terminal images in supported terminals.
+    /// Render inline and top-level display math as terminal images in supported terminals.
     pub tui_display_math: bool,
 
     /// Start the TUI in the specified collaboration mode (plan/default).

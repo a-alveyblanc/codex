@@ -1,81 +1,150 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Codex TUI with LaTeX rendering
 
----
+This fork adds native inline and display-math rendering to the Codex terminal
+UI. Finalized assistant messages are rendered with LaTeX, cached as
+high-density PNGs, and placed with the Kitty graphics protocol and Unicode
+placeholder cells.
 
-## Quickstart
+For standard Codex installation, authentication, usage, and project
+documentation, see the
+[upstream Codex README](https://github.com/openai/codex/blob/main/README.md).
+The official installers and package-manager releases install upstream Codex,
+not the custom binary from this fork.
 
-### Installing and running Codex CLI
+## Build this fork
 
-Run the following on Mac or Linux to install Codex CLI:
+Follow the
+[upstream source-build prerequisites](https://github.com/openai/codex/blob/main/docs/install.md),
+then build the feature branch from source:
 
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```sh
+git clone git@github.com:a-alveyblanc/codex.git
+cd codex
+git switch feature/tui-display-math
+cd codex-rs
+cargo build --release -p codex-cli --bin codex
+./target/release/codex
 ```
 
-Run the following on Windows to install Codex CLI:
+The renderer currently requires Linux. The machine running Codex must provide:
 
-```shell
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+- `bwrap` on `PATH`
+- `latex`, `dvipng`, and `prlimit` installed under `/usr`
+- Kitty or Ghostty, or the companion Neovim bridge described below
+
+Install the distribution packages that provide those commands and verify their
+locations with:
+
+```sh
+command -v bwrap latex dvipng prlimit
 ```
 
-The standalone installers download from `https://releases.openai.com/codex` by default and fall back to GitHub Releases if a metadata or asset download is unavailable. To force GitHub Releases, set `CODEX_INSTALLER_USE_RELEASES_OPENAI_COM` to `false` (`0` and `no` are also accepted):
+TeX runs without shell escape inside a networkless bubblewrap sandbox with
+resource and time limits. If rendering fails or the terminal is unsupported,
+Codex keeps the original Markdown math visible.
 
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false sh
+## Enable math rendering
+
+Add this to `~/.codex/config.toml`:
+
+```toml
+[tui]
+display_math = true
 ```
 
-```powershell
-$env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM='false'; irm https://chatgpt.com/codex/install.ps1 | iex
+The renderer recognizes inline math such as `$x^2 + y^2$` and top-level display
+math:
+
+```text
+$$
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+$$
 ```
 
-Codex CLI can also be installed via the following package managers:
+Math inside code spans or fenced code blocks is left unchanged. Streaming
+output remains ordinary Markdown; equations are rendered asynchronously after
+the assistant message is finalized.
 
-```shell
-# Install using npm
-npm install -g @openai/codex
+## tmux
+
+Kitty graphics and terminal color queries must pass through tmux. Add this to
+`~/.tmux.conf`:
+
+```tmux
+set -g allow-passthrough on
 ```
 
-```shell
-# Install using Homebrew
-brew install --cask codex
+Reload the configuration with `tmux source-file ~/.tmux.conf`, or restart the
+tmux server. Codex wraps only the outer-terminal requests that need
+passthrough.
+
+## SSH and remote sessions
+
+The TeX pipeline runs on the machine where the Codex process runs. When Codex
+runs on a remote server, install the renderer dependencies on that server.
+Kitty image data travels back in the terminal stream, so no X forwarding or
+shared filesystem is needed.
+
+If tmux runs on the remote host, enable `allow-passthrough` there. A single
+tmux layer is supported; nested multiplexers may require additional escape
+wrapping.
+
+## Neovim terminal panes
+
+Neovim's terminal layer does not forward Kitty image traffic by itself. The
+companion plugin is maintained separately at
+[`codex-kitty-bridge.nvim`](https://github.com/a-alveyblanc/codex-kitty-bridge.nvim).
+
+The plugin uses Snacks.nvim to forward bounded direct-PNG Kitty requests from
+Neovim terminal buffers to the outer terminal. See its README for the Lazy.nvim
+spec, SSH environment variables, and health checks.
+
+## Cache, resume behavior, and storage
+
+Rendered equations are cached across conversations under:
+
+```text
+$CODEX_HOME/cache/tui-latex
 ```
 
-Then simply run `codex` to get started.
+`$CODEX_HOME` defaults to `~/.codex`. Cache keys include the formula, math
+style, renderer version, resolution, and terminal foreground/background
+colors. The cache is pruned to at most 64 MiB or 512 files, so it should not
+grow without bound.
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+On resume, equations are collected into batches. With the normal terminal
+reflow row cap, Codex prepares only the retained transcript tail at startup and
+defers older equations until the full transcript view needs them. Setting
+`tui.terminal_resize_reflow_max_rows = 0` disables that cap and eagerly
+prepares the entire resumed transcript.
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+## Colors and high-DPI displays
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+At startup, Codex queries the terminal's default foreground and background
+colors and renders transparent equation images with the reported foreground.
+The query is sent through tmux when needed. A terminal theme change requires a
+Codex restart; the changed palette produces new cache keys automatically.
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+Codex reads the terminal cell dimensions in pixels and keeps a 2x output raster
+for Kitty or Ghostty to downsample. After changing terminal font size, monitor
+scale, or display DPI, restart Codex so newly prepared equations use the current
+cell metrics.
 
-</details>
+## Keeping the fork current
 
-### Using Codex with your ChatGPT plan
+This repository uses `origin` for the personal fork and `upstream` for OpenAI's
+repository:
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
+```sh
+git remote add upstream https://github.com/openai/codex.git
+git fetch upstream
+git switch feature/tui-display-math
+git rebase upstream/main
+git push --force-with-lease origin feature/tui-display-math
+```
 
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
+Resolve upstream conflicts in the focused config, renderer, startup,
+terminal-color, and documentation commits separately. Rebuild and run the TUI
+tests before updating the fork branch.
 
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+This repository remains licensed under the [Apache-2.0 License](LICENSE).
