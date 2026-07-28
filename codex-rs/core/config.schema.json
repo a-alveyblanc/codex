@@ -3220,6 +3220,11 @@
           "description": "Enable animations (welcome screen, shimmer effects, spinners). Defaults to `true`.",
           "type": "boolean"
         },
+        "display_math": {
+          "default": false,
+          "description": "Render top-level `$$...$$` display math as terminal images when supported. Defaults to `false`.",
+          "type": "boolean"
+        },
         "keymap": {
           "allOf": [
             {

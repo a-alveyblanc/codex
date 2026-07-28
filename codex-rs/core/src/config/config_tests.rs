@@ -1030,6 +1030,7 @@ fn config_toml_deserializes_model_availability_nux() {
             show_tooltips: true,
             vim_mode_default: false,
             raw_output_mode: false,
+            display_math: false,
             alternate_screen: AltScreenMode::default(),
             status_line: None,
             status_line_use_colors: true,
@@ -1189,6 +1190,41 @@ async fn runtime_config_uses_tui_raw_output_mode() {
     .expect("load config");
 
     assert!(cfg.tui_raw_output_mode);
+}
+
+#[test]
+fn test_tui_display_math_defaults_to_false_and_accepts_true() {
+    let default: ConfigToml = toml::from_str("[tui]\n").expect("deserialize empty [tui] table");
+    assert!(
+        !default
+            .tui
+            .expect("config should include tui section")
+            .display_math
+    );
+
+    let enabled: ConfigToml =
+        toml::from_str("[tui]\ndisplay_math = true\n").expect("deserialize display_math=true");
+    assert!(
+        enabled
+            .tui
+            .expect("config should include tui section")
+            .display_math
+    );
+}
+
+#[tokio::test]
+async fn runtime_config_uses_tui_display_math() {
+    let cfg_toml: ConfigToml =
+        toml::from_str("[tui]\ndisplay_math = true\n").expect("deserialize display_math=true");
+    let cfg = Config::load_from_base_config_with_overrides(
+        cfg_toml,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect("load config");
+
+    assert!(cfg.tui_display_math);
 }
 
 #[test]
@@ -3922,6 +3958,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             show_tooltips: true,
             vim_mode_default: false,
             raw_output_mode: false,
+            display_math: false,
             alternate_screen: AltScreenMode::Auto,
             status_line: None,
             status_line_use_colors: true,
