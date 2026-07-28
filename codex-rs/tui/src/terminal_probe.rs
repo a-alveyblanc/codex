@@ -217,6 +217,17 @@ mod imp {
         Ok(unsafe { File::from_raw_fd(duplicated) })
     }
 
+    fn default_colors_query(tmux_passthrough: bool) -> String {
+        let query = "\x1B]10;?\x1B\\\x1B]11;?\x1B\\";
+        if !tmux_passthrough {
+            return query.to_string();
+        }
+        // An unwrapped query is answered from tmux's own palette, which may differ from the
+        // foreground the outer terminal actually uses to draw Codex. Ask the outer terminal so
+        // transparent equation images use the same color as surrounding text.
+        format!("\x1BPtmux;{}\x1B\\", query.replace('\x1B', "\x1B\x1B"))
+    }
+
     /// Queries OSC 10 and OSC 11 default colors under one shared deadline.
     ///
     /// Foreground and background are only useful as a pair for palette calculations, so a missing
@@ -225,7 +236,8 @@ mod imp {
     /// while unsupported terminals still pay one bounded wait instead of one wait per slot.
     pub(crate) fn default_colors(timeout: Duration) -> io::Result<Option<DefaultColors>> {
         let mut tty = Tty::open()?;
-        tty.write_all(b"\x1B]10;?\x1B\\\x1B]11;?\x1B\\")?;
+        let query = default_colors_query(crate::display_math::tmux_passthrough_required());
+        tty.write_all(query.as_bytes())?;
         let Some(colors) = read_until(&mut tty, timeout, parse_default_colors)? else {
             return Ok(None);
         };
@@ -252,13 +264,14 @@ mod imp {
         keyboard_probe: StartupKeyboardEnhancementProbe,
     ) -> io::Result<StartupProbe> {
         let mut tty = Tty::open()?;
+        tty.write_all(b"\x1B[6n")?;
+        let color_query = default_colors_query(crate::display_math::tmux_passthrough_required());
+        tty.write_all(color_query.as_bytes())?;
         match keyboard_probe {
             StartupKeyboardEnhancementProbe::Query => {
-                tty.write_all(b"\x1B[6n\x1B]10;?\x1B\\\x1B]11;?\x1B\\\x1B[?u\x1B[c")?;
+                tty.write_all(b"\x1B[?u\x1B[c")?;
             }
-            StartupKeyboardEnhancementProbe::Skip => {
-                tty.write_all(b"\x1B[6n\x1B]10;?\x1B\\\x1B]11;?\x1B\\")?;
-            }
+            StartupKeyboardEnhancementProbe::Skip => {}
         }
         read_startup_probe(&mut tty, timeout, keyboard_probe)
     }
@@ -526,6 +539,18 @@ mod imp {
             assert_eq!(
                 parse_keyboard_enhancement_support(b""),
                 KeyboardProbeState::Pending
+            );
+        }
+
+        #[test]
+        fn wraps_default_color_queries_for_tmux_passthrough() {
+            assert_eq!(
+                default_colors_query(/*tmux_passthrough*/ false),
+                "\x1B]10;?\x1B\\\x1B]11;?\x1B\\"
+            );
+            assert_eq!(
+                default_colors_query(/*tmux_passthrough*/ true),
+                "\x1BPtmux;\x1B\x1B]10;?\x1B\x1B\\\x1B\x1B]11;?\x1B\x1B\\\x1B\\"
             );
         }
 
